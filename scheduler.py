@@ -140,3 +140,33 @@ def priority(procs):
         else:
             t += 1
     return done
+
+def simulate_sync(resources, actions, mode="mutex"):
+    # Agrupar acciones por ciclo
+    by_cycle = {}
+    for act in actions:
+        by_cycle.setdefault(act.cycle, []).append(act)
+
+    events = []
+    max_cycle = max(by_cycle.keys(), default=-1)
+
+    for cycle in range(max_cycle + 1):
+        # para cada recurso, resetear capacidad al inicio del ciclo
+        caps = resources.copy()
+        for act in by_cycle.get(cycle, []):
+            cap = caps.get(act.resource, 0)
+            if mode == "mutex":
+                if cap > 0:
+                    state = "ACCESED"
+                    caps[act.resource] = 0
+                else:
+                    state = "WAITING"
+            else:  # semáforo
+                if cap > 0:
+                    state = "ACCESED"
+                    caps[act.resource] = cap - 1
+                else:
+                    state = "WAITING"
+            events.append((cycle, act.pid, act.action, act.resource, state))
+
+    return events

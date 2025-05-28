@@ -19,14 +19,37 @@ def imprimir_gantt(lista):
         print(f"| {pid} ({start}-{end}) ", end='')
     print("|")
 
-
 def calcular_avg_waiting(lista):
     total_wait = 0
     for p in lista:
-        # Si tiene waiting_time (lo calculamos en srtf), lo usamos.
         if hasattr(p, "waiting_time"):
             wt = p.waiting_time
         else:
             wt = p.start - p.at
         total_wait += wt
     return round(total_wait / len(lista), 2)
+
+def leer_recursos(path):
+    recursos = {}
+    with open(path) as f:
+        for linea in f:
+            if not linea.strip(): continue
+            name, cnt = map(str.strip, linea.strip().split(","))
+            recursos[name] = int(cnt)
+    return recursos
+
+class Action:
+    def __init__(self, pid, action, resource, cycle):
+        self.pid = pid
+        self.action = action   # e.g. "READ" o "WRITE"
+        self.resource = resource
+        self.cycle = cycle
+
+def leer_acciones(path):
+    acciones = []
+    with open(path) as f:
+        for linea in f:
+            if not linea.strip(): continue
+            pid, act, res, cyc = map(str.strip, linea.strip().split(","))
+            acciones.append(Action(pid, act, res, int(cyc)))
+    return acciones
