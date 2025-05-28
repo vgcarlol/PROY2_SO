@@ -2,9 +2,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import scheduler
 import utils
+import random
 
-# Paleta de colores básica para Gantt
+# Paleta de colores para Gantt y sincronización
 PALETTE = ["#6fa8dc", "#93c47d", "#e06666", "#f6b26b", "#8e7cc3"]
+SYNC_COLORS = {"ACCESED": "lightgreen", "WAITING": "lightcoral"}
 
 class SimuladorApp(tk.Tk):
     def __init__(self):
@@ -12,7 +14,36 @@ class SimuladorApp(tk.Tk):
         self.title("Simulador SO")
         self.geometry("900x600")
 
-        # Notebook y pestañas
+        # Variables de carga
+        self.proc_path   = tk.StringVar()
+        self.res_path    = tk.StringVar()
+        self.act_path    = tk.StringVar()
+        self.proc_manual = tk.BooleanVar(value=False)
+        self.res_manual  = tk.BooleanVar(value=False)
+        self.act_manual  = tk.BooleanVar(value=False)
+
+        # Variables de simulación
+        self.alg_vars  = {name: tk.BooleanVar(value=False) for name in ["FIFO","SJF","SRTF","RR","Priority"]}
+        self.quantum   = tk.IntVar(value=2)
+        self.sync_mode = tk.StringVar(value="mutex")
+
+        # Estado interno para animación
+        self.colors      = {}
+        self.scale_x     = 30
+        self.margin_x    = 180  # espacio para etiqueta con avg
+        self.row_height  = 60
+        self.cal_events  = []
+        self.cal_index   = 0
+        self.sync_events = []
+        self.sync_index  = 0
+        self.max_cycle   = 0
+
+        # Construcción de la UI
+        self._build_notebook()
+        self._build_canvas()
+        self._build_cycle_label()
+
+    def _build_notebook(self):
         self.nb = ttk.Notebook(self)
         self.tab_calc = ttk.Frame(self.nb)
         self.tab_sync = ttk.Frame(self.nb)
@@ -20,42 +51,16 @@ class SimuladorApp(tk.Tk):
         self.nb.add(self.tab_sync, text="Sincronización")
         self.nb.pack(fill=tk.BOTH, expand=True)
 
-        self._create_variables()
-        self._build_tab_calendarizacion()
-        self._build_tab_sincronizacion()
-        self._build_canvas()
-        self._build_bottom_buttons()
-
-    def _create_variables(self):
-        # Paths
-        self.proc_path = tk.StringVar()
-        self.res_path  = tk.StringVar()
-        self.act_path  = tk.StringVar()
-        # Manual input toggles
-        self.proc_manual = tk.BooleanVar(value=False)
-        self.res_manual  = tk.BooleanVar(value=False)
-        self.act_manual  = tk.BooleanVar(value=False)
-        # Calendar vars
-        self.alg_vars = { name: tk.BooleanVar() for name in ["FIFO","SJF","SRTF","RR","Priority"] }
-        self.quantum  = tk.IntVar(value=2)
-        # Sync vars
-        self.sync_mode = tk.StringVar(value="mutex")
-
-    def _build_tab_calendarizacion(self):
-        frame = ttk.Frame(self.tab_calc, padding=5)
-        frame.pack(fill=tk.X)
-
-        # Carga de procesos
-        ttk.Button(frame, text="Cargar Procesos", command=self._load_processes).grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.proc_path, state="readonly", width=40).grid(row=0, column=1, padx=5)
-        ttk.Checkbutton(frame, text="Ingresar manualmente", variable=self.proc_manual,
+        # Calendarización
+        frame1 = ttk.Frame(self.tab_calc, padding=5)
+        frame1.pack(fill=tk.X)
+        ttk.Button(frame1, text="Cargar Procesos", command=self._load_processes).grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame1, textvariable=self.proc_path, state="readonly", width=40).grid(row=0, column=1, padx=5)
+        ttk.Checkbutton(frame1, text="Ingresar manualmente", variable=self.proc_manual,
                         command=self._toggle_proc_input).grid(row=0, column=2)
-
-        # Preview o input
         self.proc_preview = tk.Text(self.tab_calc, height=5, state=tk.DISABLED)
         self.proc_preview.pack(fill=tk.X, padx=5, pady=2)
 
-        # Algoritmos y quantum
         alg_frame = ttk.LabelFrame(self.tab_calc, text="Algoritmos")
         alg_frame.pack(fill=tk.X, padx=5, pady=5)
         for i,(name,var) in enumerate(self.alg_vars.items()):
@@ -63,197 +68,220 @@ class SimuladorApp(tk.Tk):
         ttk.Label(alg_frame, text="Quantum (RR):").grid(row=0, column=1, padx=10)
         ttk.Entry(alg_frame, textvariable=self.quantum, width=5).grid(row=0, column=2)
 
-        # Botón iniciar simulación
-        btn_frame = ttk.Frame(self.tab_calc, padding=5)
-        btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="Iniciar Simulación", command=self._on_execute).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Limpiar Canvas",  command=self._on_clear).pack(side=tk.LEFT)
+        btn1 = ttk.Frame(self.tab_calc, padding=5)
+        btn1.pack(fill=tk.X)
+        ttk.Button(btn1, text="Iniciar Simulación", command=self._on_execute).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn1, text="Limpiar Canvas", command=self._on_clear).pack(side=tk.LEFT)
 
-    def _build_tab_sincronizacion(self):
-        frame = ttk.Frame(self.tab_sync, padding=5)
-        frame.pack(fill=tk.X)
-
-        # Carga de recursos
-        ttk.Button(frame, text="Cargar Recursos", command=self._load_resources).grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.res_path, state="readonly", width=30).grid(row=0, column=1, padx=5)
-        ttk.Checkbutton(frame, text="Manual", variable=self.res_manual,
+        # Sincronización
+        frame2 = ttk.Frame(self.tab_sync, padding=5)
+        frame2.pack(fill=tk.X)
+        ttk.Button(frame2, text="Cargar Recursos", command=self._load_resources).grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame2, textvariable=self.res_path, state="readonly", width=30).grid(row=0, column=1, padx=5)
+        ttk.Checkbutton(frame2, text="Manual", variable=self.res_manual,
                         command=self._toggle_res_input).grid(row=0, column=2)
         self.res_preview = tk.Text(self.tab_sync, height=3, state=tk.DISABLED)
         self.res_preview.pack(fill=tk.X, padx=5, pady=2)
 
-        # Carga de acciones
-        ttk.Button(frame, text="Cargar Acciones", command=self._load_actions).grid(row=1, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.act_path, state="readonly", width=30).grid(row=1, column=1, padx=5)
-        ttk.Checkbutton(frame, text="Manual", variable=self.act_manual,
+        ttk.Button(frame2, text="Cargar Acciones", command=self._load_actions).grid(row=1, column=0, sticky="w")
+        ttk.Entry(frame2, textvariable=self.act_path, state="readonly", width=30).grid(row=1, column=1, padx=5)
+        ttk.Checkbutton(frame2, text="Manual", variable=self.act_manual,
                         command=self._toggle_act_input).grid(row=1, column=2)
         self.act_preview = tk.Text(self.tab_sync, height=5, state=tk.DISABLED)
         self.act_preview.pack(fill=tk.X, padx=5, pady=2)
 
-        # Modo mutex/semaforo
         mode_frame = ttk.LabelFrame(self.tab_sync, text="Modo de Sincronización")
         mode_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Radiobutton(mode_frame, text="Mutex",     variable=self.sync_mode, value="mutex").grid(row=0,column=0,padx=5)
-        ttk.Radiobutton(mode_frame, text="Semáforo", variable=self.sync_mode, value="semaphore").grid(row=0,column=1,padx=5)
+        ttk.Radiobutton(mode_frame, text="Mutex", variable=self.sync_mode, value="mutex").grid(row=0, column=0, padx=5)
+        ttk.Radiobutton(mode_frame, text="Semáforo", variable=self.sync_mode, value="semaphore").grid(row=0, column=1, padx=5)
 
-        # Botón iniciar simulación
-        btn_frame2 = ttk.Frame(self.tab_sync, padding=5)
-        btn_frame2.pack(fill=tk.X)
-        ttk.Button(btn_frame2, text="Iniciar Simulación", command=self._on_execute).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame2, text="Limpiar Canvas",      command=self._on_clear).pack(side=tk.LEFT)
+        btn2 = ttk.Frame(self.tab_sync, padding=5)
+        btn2.pack(fill=tk.X)
+        ttk.Button(btn2, text="Iniciar Simulación", command=self._on_execute).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn2, text="Limpiar Canvas", command=self._on_clear).pack(side=tk.LEFT)
 
     def _build_canvas(self):
-        # Contenedor con scrollbars
-        cframe = ttk.Frame(self)
-        cframe.pack(fill=tk.BOTH, expand=True)
-        # Canvas
-        self.canvas = tk.Canvas(cframe, background="white")
-        # Scrollbars
-        hbar = ttk.Scrollbar(cframe, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        vbar = ttk.Scrollbar(cframe, orient=tk.VERTICAL,   command=self.canvas.yview)
+        container = ttk.Frame(self)
+        container.pack(fill=tk.BOTH, expand=True)
+        self.canvas = tk.Canvas(container, bg="white")
+        hbar = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        vbar = ttk.Scrollbar(container, orient=tk.VERTICAL,   command=self.canvas.yview)
         self.canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
-        # Layout
         self.canvas.grid(row=0, column=0, sticky="nsew")
-        vbar.grid( row=0, column=1, sticky="ns" )
-        hbar.grid( row=1, column=0, sticky="ew" )
-        cframe.rowconfigure(0, weight=1)
-        cframe.columnconfigure(0, weight=1)
+        vbar.grid(row=0, column=1, sticky="ns")
+        hbar.grid(row=1, column=0, sticky="ew")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
 
-    def _build_bottom_buttons(self):
-        # No usado, botones en cada pestaña
-        pass
+    def _build_cycle_label(self):
+        self.cycle_label = ttk.Label(self, text="Ciclo: 0", font=(None, 12, 'bold'))
+        self.cycle_label.pack(side=tk.BOTTOM, pady=5)
 
-    # — Carga y toggles —
+    def _toggle_proc_input(self):
+        self.proc_preview.config(state=tk.NORMAL if self.proc_manual.get() else tk.DISABLED)
+
+    def _toggle_res_input(self):
+        self.res_preview.config(state=tk.NORMAL if self.res_manual.get() else tk.DISABLED)
+
+    def _toggle_act_input(self):
+        self.act_preview.config(state=tk.NORMAL if self.act_manual.get() else tk.DISABLED)
+
     def _load_processes(self):
-        path = filedialog.askopenfilename(filetypes=[("Text Files","*.txt")])
+        path = filedialog.askopenfilename(filetypes=[("TXT","*.txt")])
         if not path: return
+        # Leer procesos y asignar colores fijos
+        procs = utils.leer_procesos(path)
+        self.colors.clear()
+        for i, p in enumerate(procs):
+            self.colors[p.pid] = PALETTE[i % len(PALETTE)]
+        # Mostrar preview
         self.proc_path.set(path)
         self.proc_preview.config(state=tk.NORMAL)
         self.proc_preview.delete("1.0", tk.END)
-        preview = "".join(open(path).readlines()[:10])
-        self.proc_preview.insert(tk.END, preview)
+        self.proc_preview.insert(tk.END, "".join(open(path).readlines()[:10]))
         if not self.proc_manual.get():
             self.proc_preview.config(state=tk.DISABLED)
 
     def _load_resources(self):
-        path = filedialog.askopenfilename(filetypes=[("Text Files","*.txt")])
+        path = filedialog.askopenfilename(filetypes=[("TXT","*.txt")])
         if not path: return
         self.res_path.set(path)
         self.res_preview.config(state=tk.NORMAL)
         self.res_preview.delete("1.0", tk.END)
-        preview = "".join(open(path).readlines()[:5])
-        self.res_preview.insert(tk.END, preview)
+        self.res_preview.insert(tk.END, "".join(open(path).readlines()[:5]))
         if not self.res_manual.get():
             self.res_preview.config(state=tk.DISABLED)
 
     def _load_actions(self):
-        path = filedialog.askopenfilename(filetypes=[("Text Files","*.txt")])
+        path = filedialog.askopenfilename(filetypes=[("TXT","*.txt")])
         if not path: return
         self.act_path.set(path)
         self.act_preview.config(state=tk.NORMAL)
         self.act_preview.delete("1.0", tk.END)
-        preview = "".join(open(path).readlines()[:10])
-        self.act_preview.insert(tk.END, preview)
+        self.act_preview.insert(tk.END, "".join(open(path).readlines()[:10]))
         if not self.act_manual.get():
             self.act_preview.config(state=tk.DISABLED)
 
-    def _toggle_proc_input(self):
-        state = tk.NORMAL if self.proc_manual.get() else tk.DISABLED
-        self.proc_preview.config(state=state)
-
-    def _toggle_res_input(self):
-        state = tk.NORMAL if self.res_manual.get() else tk.DISABLED
-        self.res_preview.config(state=state)
-
-    def _toggle_act_input(self):
-        state = tk.NORMAL if self.act_manual.get() else tk.DISABLED
-        self.act_preview.config(state=state)
-
-    # — Lógica de simulación —
     def _on_execute(self):
         self.canvas.delete("all")
-        current = self.nb.index(self.nb.select())
-        if current == 0:
-            self._run_calendarizacion()
+        self.cal_index  = 0
+        self.sync_index = 0
+        self.max_cycle  = 0
+        if self.nb.index(self.nb.select()) == 0:
+            self._prepare_calendar()
         else:
-            self._run_sincronizacion()
+            self._prepare_sync()
 
     def _on_clear(self):
         self.canvas.delete("all")
+        self.cycle_label.config(text="Ciclo: 0")
 
-    def _run_calendarizacion(self):
-        # Leer procesos
+    def _draw_axis(self):
+        self.canvas.delete('axis')
+        y = 30
+        step = max(1, self.max_cycle // 20)
+        for c in range(0, self.max_cycle + 1, step):
+            x = self.margin_x + c * self.scale_x
+            self.canvas.create_line(x, y-5, x, y+5, tags='axis')
+            self.canvas.create_text(x, y-15, text=str(c), tags='axis')
+        self.canvas.config(scrollregion=self.canvas.bbox('all'))
+
+    def _prepare_calendar(self):
         try:
             if self.proc_manual.get():
                 lines = self.proc_preview.get("1.0", tk.END).strip().splitlines()
-                procs = [scheduler.Process(*map(str.strip, line.split(","))) for line in lines if line.strip()]
-                procs = [scheduler.Process(p.pid, int(p.bt), int(p.at), int(p.prio)) for p in procs]
+                procs = [scheduler.Process(*map(str.strip, l.split(","))) for l in lines if l.strip()]
             else:
                 procs = utils.leer_procesos(self.proc_path.get())
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo leer procesos:\n{e}")
-            return
+            return messagebox.showerror("Error", f"No se pudo leer procesos:\n{e}")
 
-        selected = [name for name,var in self.alg_vars.items() if var.get()]
-        if not selected:
-            messagebox.showwarning("Atención", "Selecciona al menos un algoritmo.")
-            return
+        algs = [name for name,var in self.alg_vars.items() if var.get()]
+        if not algs:
+            return messagebox.showwarning("Atención", "Selecciona al menos un algoritmo.")
 
-        max_end = 0
-        for idx, name in enumerate(selected):
-            procs_copy = [p.copy() for p in procs]
+        self.cal_events.clear()
+        for idx,name in enumerate(algs):
+            cp = [p.copy() for p in procs]
             if name == "SRTF":
-                done, gantt = scheduler.srtf(procs_copy)
+                done, gantt = scheduler.srtf(cp)
             elif name == "RR":
-                done = scheduler.rr(procs_copy, self.quantum.get())
-                gantt = [(p.pid, p.start, p.end) for p in done]
+                done = scheduler.rr(cp, self.quantum.get())
+                gantt = [(p.pid,p.start,p.end) for p in done]
             else:
-                func = getattr(scheduler, name.lower())
-                done = func(procs_copy)
-                gantt = [(p.pid, p.start, p.end) for p in done]
+                done = getattr(scheduler, name.lower())(cp)
+                gantt = [(p.pid,p.start,p.end) for p in done]
             avg = utils.calcular_avg_waiting(done)
+            label = f"{name} (Avg WT: {avg})"
+            self.cal_events.append(('label', label, idx))
+            for pid,s,e in gantt:
+                self.cal_events.append((idx,pid,s,e))
+                self.max_cycle = max(self.max_cycle,e)
 
-            # Etiqueta
-            self.canvas.create_text(10, 20 + idx*80,
-                                    text=f"{name} (Avg WT: {avg})", anchor="w",
-                                    font=("Arial", 10, "bold"))
-            # Gantt
-            for pid, start, end in gantt:
-                color = PALETTE[idx % len(PALETTE)]
-                y = 40 + idx*80
-                x1 = 10 + start*30
-                x2 = 10 + end*30
-                self.canvas.create_rectangle(x1, y, x2, y+30, fill=color, outline="black")
-                self.canvas.create_text((x1+x2)//2, y+15, text=pid)
-                max_end = max(max_end, end)
+        self._draw_axis()
+        self._animate_calendar()
 
-        # Ajustar scrollregion
-        width = 10 + max_end*30 + 50
-        height = 40 + len(selected)*80 + 20
-        self.canvas.config(scrollregion=(0,0,width,height))
+    def _animate_calendar(self):
+        if self.cal_index >= len(self.cal_events):
+            return
+        evt = self.cal_events[self.cal_index]
+        if evt[0] == 'label':
+            _, text, row = evt
+            y = 40 + row * self.row_height
+            self.canvas.create_text(10, y+15, text=text, anchor='w', font=('Arial',10,'bold'), tags='label')
+        else:
+            row,pid,s,e = evt
+            y0 = 40 + row * self.row_height
+            x0 = self.margin_x + s * self.scale_x
+            x1 = self.margin_x + e * self.scale_x
+            col = self.colors.get(pid, random.choice(PALETTE))
+            self.canvas.create_rectangle(x0,y0,x1,y0+30, fill=col, outline='black')
+            self.canvas.create_text((x0+x1)//2, y0+15, text=pid, fill='white')
+            self.cycle_label.config(text=f"Ciclo: {e}")
+        self.canvas.config(scrollregion=self.canvas.bbox('all'))
+        self.cal_index += 1
+        self.after(300, self._animate_calendar)
 
-    def _run_sincronizacion(self):
+    def _prepare_sync(self):
         try:
             if self.res_manual.get():
                 lines = self.res_preview.get("1.0", tk.END).strip().splitlines()
-                resources = {l.split(",")[0].strip(): int(l.split(",")[1]) for l in lines}
+                resources = {l.split(",")[0].strip():int(l.split(",")[1]) for l in lines}
             else:
                 resources = utils.leer_recursos(self.res_path.get())
             if self.act_manual.get():
                 lines = self.act_preview.get("1.0", tk.END).strip().splitlines()
-                actions = [utils.Action(*map(str.strip, l.split(","))) for l in lines]
+                actions = [utils.Action(*map(str.strip,l.split(","))) for l in lines]
             else:
                 actions = utils.leer_acciones(self.act_path.get())
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo leer recursos/acciones:\n{e}")
-            return
+            return messagebox.showerror("Error", f"No se pudo leer recursos/acciones:\n{e}")
 
-        events = scheduler.simulate_sync(resources, actions, mode=self.sync_mode.get())
-        y = 10
-        for cycle, pid, act, res, state in events:
-            txt = f"Ciclo {cycle}: {pid} {act} {res} -> {state}"
-            self.canvas.create_text(10, y, text=txt, anchor="w", font=("Arial", 9))
-            y += 20
-        self.canvas.config(scrollregion=(0,0,800,y+20))
+        self.sync_events = scheduler.simulate_sync(resources, actions, mode=self.sync_mode.get())
+        self.max_cycle   = max((c for c,_,_,_,_ in self.sync_events), default=0)
+        self.pid_rows    = {}
+        for _,pid,_,_,_ in self.sync_events:
+            if pid not in self.pid_rows:
+                self.pid_rows[pid] = len(self.pid_rows)
+
+        self._draw_axis()
+        self._animate_sync()
+
+    def _animate_sync(self):
+        if self.sync_index >= len(self.sync_events):
+            return
+        cycle,pid,_,_,state = self.sync_events[self.sync_index]
+        row = self.pid_rows[pid]
+        y0 = 40 + row * self.row_height
+        x0 = self.margin_x + cycle * self.scale_x
+        x1 = x0 + self.scale_x
+        col = SYNC_COLORS.get(state, 'gray')
+        self.canvas.create_rectangle(x0,y0,x1,y0+30, fill=col, outline='black')
+        self.canvas.create_text((x0+x1)//2, y0+15, text=pid)
+        self.canvas.config(scrollregion=self.canvas.bbox('all'))
+        self.cycle_label.config(text=f"Ciclo: {cycle}")
+        self.sync_index += 1
+        self.after(200, self._animate_sync)
 
 if __name__ == "__main__":
     app = SimuladorApp()
