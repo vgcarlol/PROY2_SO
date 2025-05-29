@@ -1,6 +1,6 @@
 # Proyecto Final Sistemas Operativos
 
-Este proyecto implementa un simulador de algoritmos de calendarización (FIFO, SJF, SRTF, RR y Priority) y mecanismos de sincronización (mutex y semáforo) con interfaz gráfica en Tkinter.
+Este proyecto implementa un simulador de algoritmos de calendarización (FIFO, SJF, SRT, RR y Priority) y mecanismos de sincronización (mutex y semáforo) con interfaz gráfica en Tkinter.
 
 ---
 

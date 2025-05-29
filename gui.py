@@ -23,14 +23,14 @@ class SimuladorApp(tk.Tk):
         self.act_manual  = tk.BooleanVar(value=False)
 
         # Variables de simulación
-        self.alg_vars  = {name: tk.BooleanVar(value=False) for name in ["FIFO","SJF","SRTF","RR","Priority"]}
+        self.alg_vars  = {name: tk.BooleanVar(value=False) for name in ["FIFO","SJF","SRT","RR","Priority"]}
         self.quantum   = tk.IntVar(value=2)
         self.sync_mode = tk.StringVar(value="mutex")
 
         # Estado interno para animación
         self.colors      = {}
         self.scale_x     = 30
-        self.margin_x    = 180  # espacio para etiqueta con avg
+        self.margin_x    = 500  # espacio para etiqueta con avg
         self.row_height  = 60
         self.cal_events  = []
         self.cal_index   = 0
@@ -127,14 +127,15 @@ class SimuladorApp(tk.Tk):
         self.act_preview.config(state=tk.NORMAL if self.act_manual.get() else tk.DISABLED)
 
     def _load_processes(self):
+        """Carga procesos desde archivo y asigna colores + guarda en self.procs."""
         path = filedialog.askopenfilename(filetypes=[("TXT","*.txt")])
-        if not path: return
-        # Leer procesos y asignar colores fijos
+        if not path:
+            return
         procs = utils.leer_procesos(path)
         self.colors.clear()
         for i, p in enumerate(procs):
             self.colors[p.pid] = PALETTE[i % len(PALETTE)]
-        # Mostrar preview
+        self.procs = procs
         self.proc_path.set(path)
         self.proc_preview.config(state=tk.NORMAL)
         self.proc_preview.delete("1.0", tk.END)
@@ -186,13 +187,39 @@ class SimuladorApp(tk.Tk):
             self.canvas.create_text(x, y-15, text=str(c), tags='axis')
         self.canvas.config(scrollregion=self.canvas.bbox('all'))
 
+    def _draw_legend(self, pids):
+        self.canvas.delete('legend')
+        x0, y0 = self.margin_x, 10
+        for pid in pids:
+            color = self.colors.get(pid, "gray")
+            # cuadrito de color
+            self.canvas.create_rectangle(
+                x0, y0, x0+15, y0+15,
+                fill=color, outline="black",
+                tags="legend"
+            )
+            # texto al lado
+            self.canvas.create_text(
+                x0+20, y0+7,
+                text=pid, anchor="w",
+                font=("Arial", 8),
+                tags="legend"
+            )
+            x0 += 60
+
+
+
     def _prepare_calendar(self):
         try:
             if self.proc_manual.get():
                 lines = self.proc_preview.get("1.0", tk.END).strip().splitlines()
-                procs = [scheduler.Process(*map(str.strip, l.split(","))) for l in lines if l.strip()]
+                procs = []
+                for l in lines:
+                    pid, bt, at, prio = map(str.strip, l.split(","))
+                    procs.append(scheduler.Process(pid, int(bt), int(at), int(prio)))
             else:
                 procs = utils.leer_procesos(self.proc_path.get())
+
         except Exception as e:
             return messagebox.showerror("Error", f"No se pudo leer procesos:\n{e}")
 
@@ -201,22 +228,40 @@ class SimuladorApp(tk.Tk):
             return messagebox.showwarning("Atención", "Selecciona al menos un algoritmo.")
 
         self.cal_events.clear()
-        for idx,name in enumerate(algs):
+        for idx, name in enumerate(algs):
+            # Hacemos copia limpia de los procesos
             cp = [p.copy() for p in procs]
-            if name == "SRTF":
-                done, gantt = scheduler.srtf(cp)
+
+            if name == "SRT":
+                # Preemptivo (alias de srtf)
+                done, gantt = scheduler.srt(cp)
+
             elif name == "RR":
-                done = scheduler.rr(cp, self.quantum.get())
-                gantt = [(p.pid,p.start,p.end) for p in done]
+                # Ahora rr devuelve (done, gantt_segments)
+                done, gantt = scheduler.rr(cp, self.quantum.get())
+
             else:
+                # FIFO, SJF, Priority (no preemptivos)
                 done = getattr(scheduler, name.lower())(cp)
-                gantt = [(p.pid,p.start,p.end) for p in done]
-            avg = utils.calcular_avg_waiting(done)
-            label = f"{name} (Avg WT: {avg})"
+                gantt = [(p.pid, p.start, p.end) for p in done]
+
+            # ——— Calcular métricas adicionales ———
+            avg_wt     = utils.calcular_avg_waiting(done)
+            avg_tat    = utils.calcular_avg_turnaround(done)
+            throughput = utils.calcular_throughput(done)
+            label = (
+                f"{name}  •  Avg WT: {avg_wt}  •  "
+                f"Avg TAT: {avg_tat}  •  "
+                f"Throughput: {throughput} proc/ciclo"
+            )
+
+            # Etiqueta en Gantt
             self.cal_events.append(('label', label, idx))
-            for pid,s,e in gantt:
-                self.cal_events.append((idx,pid,s,e))
-                self.max_cycle = max(self.max_cycle,e)
+
+            # Cada segmento para animar
+            for pid, s, e in gantt:
+                self.cal_events.append((idx, pid, s, e))
+                self.max_cycle = max(self.max_cycle, e)
 
         self._draw_axis()
         self._animate_calendar()
@@ -243,29 +288,54 @@ class SimuladorApp(tk.Tk):
         self.after(300, self._animate_calendar)
 
     def _prepare_sync(self):
+        if not hasattr(self, 'procs') or not self.procs:
+            return messagebox.showwarning(
+                "Atención",
+                "Antes de simular sincronización debes cargar el archivo de procesos en la pestaña Calendarización."
+            )
+
         try:
             if self.res_manual.get():
                 lines = self.res_preview.get("1.0", tk.END).strip().splitlines()
-                resources = {l.split(",")[0].strip():int(l.split(",")[1]) for l in lines}
+                resources = {l.split(",")[0].strip(): int(l.split(",")[1]) for l in lines}
             else:
                 resources = utils.leer_recursos(self.res_path.get())
+
             if self.act_manual.get():
                 lines = self.act_preview.get("1.0", tk.END).strip().splitlines()
-                actions = [utils.Action(*map(str.strip,l.split(","))) for l in lines]
+                actions = []
+                for l in lines:
+                    pid, act, res, cyc = map(str.strip, l.split(","))
+                    actions.append(utils.Action(pid, act, res, int(cyc)))
             else:
                 actions = utils.leer_acciones(self.act_path.get())
+
         except Exception as e:
             return messagebox.showerror("Error", f"No se pudo leer recursos/acciones:\n{e}")
 
-        self.sync_events = scheduler.simulate_sync(resources, actions, mode=self.sync_mode.get())
-        self.max_cycle   = max((c for c,_,_,_,_ in self.sync_events), default=0)
-        self.pid_rows    = {}
-        for _,pid,_,_,_ in self.sync_events:
-            if pid not in self.pid_rows:
-                self.pid_rows[pid] = len(self.pid_rows)
+        self.sync_events = scheduler.simulate_sync(
+            resources,
+            actions,
+            self.procs,
+            mode=self.sync_mode.get()
+        )
+
+
+        pids = []
+        for cycle, pid, _, _, _ in self.sync_events:
+            if pid not in pids:
+                pids.append(pid)
+
+        self._draw_legend(pids)
+
+        self.max_cycle = max((c for c, *_ in self.sync_events), default=0)
+
+        self.pid_rows = { pid: idx for idx, pid in enumerate(pids) }
 
         self._draw_axis()
         self._animate_sync()
+
+
 
     def _animate_sync(self):
         if self.sync_index >= len(self.sync_events):

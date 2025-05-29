@@ -43,8 +43,8 @@ def sjf(procs):
             t += 1
     return done
 
-# SRTF (preemptivo)
-def srtf(procs):
+# SRT (preemptivo)
+def srt(procs):
     t = 0
     ready = []
     done = []
@@ -100,28 +100,53 @@ def srtf(procs):
 
 # RR
 def rr(procs, quantum):
+    # Ordenar procesos por llegada
+    procs.sort(key=lambda p: p.at)
     t = 0
-    ready, queue, done = [], [], []
-    while procs or queue or ready:
-        ready += [p for p in procs if p.at <= t]
-        procs = [p for p in procs if p.at > t]
-        queue += ready
-        ready = []
-        if queue:
-            p = queue.pop(0)
-            if p.start is None:
-                p.start = t
-            exec_time = min(quantum, p.rt)
-            p.rt -= exec_time
-            t += exec_time
-            if p.rt == 0:
-                p.end = t
-                done.append(p)
-            else:
-                queue += [p]
+    queue = []
+    done = []
+    gantt = []
+    i = 0   # índice para insertar nuevos procesos al llegar
+
+    while queue or i < len(procs):
+        # Si no hay nadie en cola, saltamos al próximo arribo
+        if not queue:
+            t = max(t, procs[i].at)
+            queue.append(procs[i])
+            i += 1
+
+        # Sacamos el siguiente de la cola
+        p = queue.pop(0)
+        if p.start is None:
+            p.start = t
+
+        # La porción de CPU que va a correr ahora
+        porcion = min(quantum, p.rt)
+        gantt.append((p.pid, t, t + porcion))
+
+        # Avanzamos el tiempo y actualizamos restante
+        t      += porcion
+        p.rt   -= porcion
+
+        # Insertamos en la cola los procesos que hayan llegado durante esta porción
+        while i < len(procs) and procs[i].at <= t:
+            queue.append(procs[i])
+            i += 1
+
+        # Si terminó, lo movemos a done; si no, vuelve al fondo de la cola
+        if p.rt == 0:
+            p.end = t
+            done.append(p)
         else:
-            t += 1
-    return done
+            queue.append(p)
+
+    # Calculamos waiting_time y turnaround_time
+    for p in done:
+        p.waiting_time    = p.end - p.at - p.bt
+        p.turnaround_time = p.end - p.at
+
+    return done, gantt
+
 
 # PRIORITY (no preemptivo)
 def priority(procs):
@@ -141,32 +166,51 @@ def priority(procs):
             t += 1
     return done
 
-def simulate_sync(resources, actions, mode="mutex"):
-    # Agrupar acciones por ciclo
+def simulate_sync(resources, actions, procs, mode="mutex"):
+    # 1) Mapa de llegada de cada proceso
+    arrival = { p.pid: p.at for p in procs }
+
+    # 2) Agrupamos acciones por ciclo
     by_cycle = {}
     for act in actions:
         by_cycle.setdefault(act.cycle, []).append(act)
 
+    # 3) Vamos a acumular todos los eventos
     events = []
     max_cycle = max(by_cycle.keys(), default=-1)
 
+    # 4) Inicializamos el “semáforo” o mutex con las capacidades iniciales
+    caps = resources.copy()
+
+    # 5) Recorremos ciclo a ciclo
     for cycle in range(max_cycle + 1):
-        # para cada recurso, resetear capacidad al inicio del ciclo
-        caps = resources.copy()
         for act in by_cycle.get(cycle, []):
-            cap = caps.get(act.resource, 0)
-            if mode == "mutex":
-                if cap > 0:
-                    state = "ACCESED"
-                    caps[act.resource] = 0
-                else:
-                    state = "WAITING"
-            else:  # semáforo
-                if cap > 0:
-                    state = "ACCESED"
-                    caps[act.resource] = cap - 1
-                else:
-                    state = "WAITING"
+            # 5.1 Si el proceso todavía no ha llegado
+            if cycle < arrival.get(act.pid, 0):
+                state = "WAITING"
+
+            else:
+                if mode == "mutex":
+                    # mutex clásico: si está libre, lo toma y bloquea para siempre
+                    if caps.get(act.resource, 0) > 0:
+                        state = "ACCESED"
+                        caps[act.resource] = 0
+                    else:
+                        state = "WAITING"
+
+                else:  # semáforo contando
+                    if act.action.upper() == "READ":
+                        # P (acquire)
+                        if caps.get(act.resource, 0) > 0:
+                            state = "ACCESED"
+                            caps[act.resource] -= 1
+                        else:
+                            state = "WAITING"
+                    else:
+                        # V (release) — liberamos sin bloqueos
+                        state = "ACCESED"
+                        caps[act.resource] = caps.get(act.resource, 0) + 1
+
             events.append((cycle, act.pid, act.action, act.resource, state))
 
     return events

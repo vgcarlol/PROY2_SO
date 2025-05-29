@@ -1,5 +1,5 @@
 from utils import leer_procesos, imprimir_gantt, calcular_avg_waiting, leer_recursos, leer_acciones
-from scheduler import fifo, sjf, srtf, rr, priority, simulate_sync
+from scheduler import fifo, sjf, srt, rr, priority, simulate_sync
 
 if __name__ == "__main__":
     archivo = "data/procesos.txt"  
@@ -17,10 +17,10 @@ if __name__ == "__main__":
     imprimir_gantt(gantt)
     print("Avg WT:", calcular_avg_waiting(gantt))
 
-    print("\n[ SRTF ]")
-    procesos_srtf, gantt_srtf = srtf([p.copy() for p in procesos])
-    imprimir_gantt(gantt_srtf)
-    print("Avg WT:", calcular_avg_waiting(procesos_srtf))
+    print("\n[ SRT ]")
+    procesos_srt, gantt_srt = srt([p.copy() for p in procesos])
+    imprimir_gantt(gantt_srt)
+    print("Avg WT:", calcular_avg_waiting(procesos_srt))
 
 
     print("\n[ Round Robin ]")

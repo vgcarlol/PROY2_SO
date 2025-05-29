@@ -29,6 +29,22 @@ def calcular_avg_waiting(lista):
         total_wait += wt
     return round(total_wait / len(lista), 2)
 
+def calcular_avg_turnaround(lista):
+    """Calcula el turnaround time medio (end - arrival)."""
+    total_tat = 0
+    for p in lista:
+        tat = getattr(p, "turnaround_time", p.end - p.at)
+        total_tat += tat
+    return round(total_tat / len(lista), 2)
+
+def calcular_throughput(lista):
+    """Calcula el throughput = nº procesos / tiempo total (máximo end)."""
+    if not lista:
+        return 0
+    max_end = max(p.end for p in lista)
+    return round(len(lista) / max_end, 2)
+
+
 def leer_recursos(path):
     recursos = {}
     with open(path) as f:
