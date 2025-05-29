@@ -167,50 +167,53 @@ def priority(procs):
     return done
 
 def simulate_sync(resources, actions, procs, mode="mutex"):
-    # 1) Mapa de llegada de cada proceso
-    arrival = { p.pid: p.at for p in procs }
-
-    # 2) Agrupamos acciones por ciclo
-    by_cycle = {}
+    arrival   = {p.pid: p.at for p in procs}
+    by_cycle  = {}
     for act in actions:
         by_cycle.setdefault(act.cycle, []).append(act)
 
-    # 3) Vamos a acumular todos los eventos
-    events = []
     max_cycle = max(by_cycle.keys(), default=-1)
+    caps      = resources.copy()
+    events    = []
+    # Inicializar también el historial completo por PID
+    process_states = {
+        p.pid: ["IDLE"] * (max_cycle+1)
+        for p in procs
+    }
 
-    # 4) Inicializamos el “semáforo” o mutex con las capacidades iniciales
-    caps = resources.copy()
-
-    # 5) Recorremos ciclo a ciclo
-    for cycle in range(max_cycle + 1):
+    for cycle in range(max_cycle+1):
         for act in by_cycle.get(cycle, []):
-            # 5.1 Si el proceso todavía no ha llegado
-            if cycle < arrival.get(act.pid, 0):
-                state = "WAITING"
+            pid, res, op = act.pid, act.resource, act.action.upper()
 
+            # 1) ¿Ha llegado el proceso?
+            if cycle < arrival[pid]:
+                state = "WAITING"
             else:
                 if mode == "mutex":
-                    # mutex clásico: si está libre, lo toma y bloquea para siempre
-                    if caps.get(act.resource, 0) > 0:
-                        state = "ACCESED"
-                        caps[act.resource] = 0
+                    # toma/bloquea un lock binario
+                    if caps.get(res,0) > 0:
+                        state       = "ACCESED"
+                        caps[res]   = 0
                     else:
                         state = "WAITING"
 
-                else:  # semáforo contando
-                    if act.action.upper() == "READ":
-                        # P (acquire)
-                        if caps.get(act.resource, 0) > 0:
-                            state = "ACCESED"
-                            caps[act.resource] -= 1
+                else:  # modo semáforo
+                    if op == "READ":
+                        # P
+                        if caps.get(res,0) > 0:
+                            state     = "ACCESED"
+                            caps[res] = caps[res] - 1
                         else:
                             state = "WAITING"
+                    elif op == "WRITE":
+                        # V
+                        state     = "ACCESED"
+                        caps[res] = caps.get(res,0) + 1
                     else:
-                        # V (release) — liberamos sin bloqueos
+                        # Si hay otros ops, los tratamos como acceso neutro
                         state = "ACCESED"
-                        caps[act.resource] = caps.get(act.resource, 0) + 1
 
-            events.append((cycle, act.pid, act.action, act.resource, state))
+            events.append((cycle, pid, op, res, state))
+            process_states[pid][cycle] = state
 
-    return events
+    return events, process_states

@@ -313,11 +313,11 @@ class SimuladorApp(tk.Tk):
         except Exception as e:
             return messagebox.showerror("Error", f"No se pudo leer recursos/acciones:\n{e}")
 
-        self.sync_events = scheduler.simulate_sync(
-            resources,
-            actions,
-            self.procs,
-            mode=self.sync_mode.get()
+        self.sync_events, self.process_states = scheduler.simulate_sync(
+             resources,
+             actions,
+             self.procs,
+             mode=self.sync_mode.get()
         )
 
 
@@ -335,23 +335,26 @@ class SimuladorApp(tk.Tk):
         self._draw_axis()
         self._animate_sync()
 
-
-
     def _animate_sync(self):
-        if self.sync_index >= len(self.sync_events):
-            return
-        cycle,pid,_,_,state = self.sync_events[self.sync_index]
-        row = self.pid_rows[pid]
-        y0 = 40 + row * self.row_height
-        x0 = self.margin_x + cycle * self.scale_x
-        x1 = x0 + self.scale_x
-        col = SYNC_COLORS.get(state, 'gray')
-        self.canvas.create_rectangle(x0,y0,x1,y0+30, fill=col, outline='black')
-        self.canvas.create_text((x0+x1)//2, y0+15, text=pid)
-        self.canvas.config(scrollregion=self.canvas.bbox('all'))
-        self.cycle_label.config(text=f"Ciclo: {cycle}")
-        self.sync_index += 1
-        self.after(200, self._animate_sync)
+        # Antes de animar evento a evento, pinta TODO el grid:
+        for pid, states in self.process_states.items():
+            row = self.pid_rows[pid]
+            y0  = 40 + row*self.row_height
+            for c, st in enumerate(states):
+                x0  = self.margin_x + c*self.scale_x
+                col = "lightgrey" if st=="IDLE" else SYNC_COLORS[st]
+                self.canvas.create_rectangle(
+                    x0, y0, x0+self.scale_x, y0+30,
+                    fill=col, outline="black"
+                )
+                self.canvas.create_text(
+                    (x0 + x0+self.scale_x)//2, y0+15,
+                    text=pid, fill="white"
+                )
+
+        # (Opcional) actualizar etiqueta de ciclo al final:
+        self.cycle_label.config(text=f"Simulación lista: ciclos 0–{len(states)-1}")
+
 
 if __name__ == "__main__":
     app = SimuladorApp()
