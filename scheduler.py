@@ -167,53 +167,62 @@ def priority(procs):
     return done
 
 def simulate_sync(resources, actions, procs, mode="mutex"):
-    arrival   = {p.pid: p.at for p in procs}
-    by_cycle  = {}
+
+    arrival = { p.pid: p.at for p in procs }
+
+    by_cycle = {}
     for act in actions:
         by_cycle.setdefault(act.cycle, []).append(act)
 
-    max_cycle = max(by_cycle.keys(), default=-1)
-    caps      = resources.copy()
-    events    = []
-    # Inicializar también el historial completo por PID
+    max_cycle      = max(by_cycle.keys(), default=-1)
+    caps           = resources.copy()
+    events         = []
     process_states = {
-        p.pid: ["IDLE"] * (max_cycle+1)
+        p.pid: ["IDLE"] * (max_cycle + 1)
         for p in procs
     }
 
-    for cycle in range(max_cycle+1):
+    for cycle in range(max_cycle + 1):
         for act in by_cycle.get(cycle, []):
             pid, res, op = act.pid, act.resource, act.action.upper()
 
-            # 1) ¿Ha llegado el proceso?
             if cycle < arrival[pid]:
                 state = "WAITING"
+
             else:
                 if mode == "mutex":
-                    # toma/bloquea un lock binario
-                    if caps.get(res,0) > 0:
-                        state       = "ACCESED"
-                        caps[res]   = 0
-                    else:
-                        state = "WAITING"
+                    # En mutex, usamos READ→P y WRITE→V
+                    if op == "READ":   # P (lock)
+                        if caps.get(res, 0) > 0:
+                            state     = "ACCESED"
+                            caps[res] = 0
+                        else:
+                            state = "WAITING"
 
-                else:  # modo semáforo
-                    if op == "READ":
-                        # P
-                        if caps.get(res,0) > 0:
+                    elif op == "WRITE": # V (unlock)
+                        state     = "ACCESED"
+                        caps[res] = 1
+
+                    else:
+                        # Cualquier otra acción, la marcamos como ACCESED
+                        state = "ACCESED"
+
+                else:  # modo semáforo contando
+                    if op in ("WAIT", "READ"):   # P
+                        if caps.get(res, 0) > 0:
                             state     = "ACCESED"
                             caps[res] = caps[res] - 1
                         else:
                             state = "WAITING"
-                    elif op == "WRITE":
-                        # V
+
+                    elif op in ("SIGNAL", "WRITE"):  # V
                         state     = "ACCESED"
-                        caps[res] = caps.get(res,0) + 1
+                        caps[res] = caps.get(res, 0) + 1
+
                     else:
-                        # Si hay otros ops, los tratamos como acceso neutro
                         state = "ACCESED"
 
             events.append((cycle, pid, op, res, state))
             process_states[pid][cycle] = state
 
-    return events, process_states
+    return events, process_states, max_cycle

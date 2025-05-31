@@ -103,15 +103,26 @@ class SimuladorApp(tk.Tk):
     def _build_canvas(self):
         container = ttk.Frame(self)
         container.pack(fill=tk.BOTH, expand=True)
+
         self.canvas = tk.Canvas(container, bg="white")
+        # Cada vez que cambie el tamaño del canvas, actualizamos scrollregion
+        self.canvas.bind('<Configure>', 
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all'))
+        )
+
         hbar = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=self.canvas.xview)
         vbar = ttk.Scrollbar(container, orient=tk.VERTICAL,   command=self.canvas.yview)
         self.canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+
+        # colocación por grid
         self.canvas.grid(row=0, column=0, sticky="nsew")
-        vbar.grid(row=0, column=1, sticky="ns")
-        hbar.grid(row=1, column=0, sticky="ew")
+        vbar.grid   (row=0, column=1, sticky="ns")
+        hbar.grid   (row=1, column=0, sticky="ew")
+
+        # decimos qué parte crece y cómo
         container.rowconfigure(0, weight=1)
         container.columnconfigure(0, weight=1)
+
 
     def _build_cycle_label(self):
         self.cycle_label = ttk.Label(self, text="Ciclo: 0", font=(None, 12, 'bold'))
@@ -294,6 +305,7 @@ class SimuladorApp(tk.Tk):
                 "Antes de simular sincronización debes cargar el archivo de procesos en la pestaña Calendarización."
             )
 
+        # ————— Leer recursos y acciones —————
         try:
             if self.res_manual.get():
                 lines = self.res_preview.get("1.0", tk.END).strip().splitlines()
@@ -313,27 +325,30 @@ class SimuladorApp(tk.Tk):
         except Exception as e:
             return messagebox.showerror("Error", f"No se pudo leer recursos/acciones:\n{e}")
 
-        self.sync_events, self.process_states = scheduler.simulate_sync(
-             resources,
-             actions,
-             self.procs,
-             mode=self.sync_mode.get()
+        # ————— Simular y desempaquetar los 3 valores —————
+        self.sync_events, self.process_states, raw_max = scheduler.simulate_sync(
+            resources,
+            actions,
+            self.procs,
+            mode=self.sync_mode.get()
         )
 
-
+        # ————— Preparar la leyenda (orden de los PIDs) —————
         pids = []
-        for cycle, pid, _, _, _ in self.sync_events:
+        for cycle, pid, *_ in self.sync_events:
             if pid not in pids:
                 pids.append(pid)
-
         self._draw_legend(pids)
-
-        self.max_cycle = max((c for c, *_ in self.sync_events), default=0)
-
         self.pid_rows = { pid: idx for idx, pid in enumerate(pids) }
 
+        # ————— Fijar el eje según raw_max —————
+        # raw_max es el ciclo máximo devuelto por simulate_sync
+        self.max_cycle = raw_max
+
+        # ————— Dibujar y animar —————
         self._draw_axis()
         self._animate_sync()
+
 
     def _animate_sync(self):
         # Antes de animar evento a evento, pinta TODO el grid:
